@@ -45,10 +45,10 @@ PHONEGAP_TEMPLATE_PATH="$HOME/Library/Application Support/Developer/Shared/Xcode
 # ##############################################
 
 # 1st argument: name of the project
-PROJECT_NAME=$1
+PROJECT_NAME="$1"
 
 # 2nd argument: path to put new project
-NEW_PROJECT_PATH=$2
+NEW_PROJECT_PATH="$2"
 
 # ##############################################
 # CHECKS
@@ -65,7 +65,7 @@ if [ ! -d "$NEW_PROJECT_PATH" ]; then
 	exit 1
 fi
 
-NEW_PROJECT_PATH=`cd $NEW_PROJECT_PATH; pwd`
+NEW_PROJECT_PATH="`cd \"$NEW_PROJECT_PATH\"; pwd`"
 
 # ##############################################
 # TEMPORARY WORKING DIRECTORY
