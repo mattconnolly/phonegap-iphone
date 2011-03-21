@@ -12,20 +12,18 @@
 #import "PhoneGapDelegate.h"
 #import "Categories.h"
 #import "Notification.h"
-#import "OCCFObject.h"
-#import "OCABRecord.h"
-#import "OCABMutableMultiValue.h"
+
 
 @implementation ContactsPicker
 
 @synthesize allowsEditing;
-@synthesize jsCallback;
+@synthesize callbackId;
 @synthesize selectedId;
 
 @end
 @implementation NewContactsController
 
-@synthesize jsCallback;
+@synthesize callbackId;
 
 @end
 
@@ -62,18 +60,13 @@
 // iPhone only method to create a new contact through the GUI
 - (void) newContact:(NSMutableArray*)arguments withDict:(NSMutableDictionary*)options;
 {	
-	NSUInteger argc = [arguments count];
-	NSString* jsString = nil;
-	if (argc > 0) { 
-		jsString = [arguments objectAtIndex:0];
-	} 
-	
+	NSString* callbackId = [arguments objectAtIndex:0];
 
 	NewContactsController* npController = [[[NewContactsController alloc] init] autorelease];
 		
 	npController.addressBook = ABAddressBookCreate();
 	npController.newPersonViewDelegate = self;
-	npController.jsCallback = jsString;
+	npController.callbackId = callbackId;
 
 	UINavigationController *navController = [[[UINavigationController alloc] initWithRootViewController:npController] autorelease];
 	[[super appViewController] presentModalViewController:navController animated: YES];
@@ -85,44 +78,29 @@
 
 - (void) newPersonViewController:(ABNewPersonViewController*)newPersonViewController didCompleteWithNewPerson:(ABRecordRef)person
 {
-	NSString* jsString = nil;
+
 	ABRecordID recordId = kABRecordInvalidID;
 	NewContactsController* newCP = (NewContactsController*) newPersonViewController;
-
+	NSString* callbackId = newCP.callbackId;
+	
 	if (person != NULL) {
-		if (newCP.jsCallback){
 			//return the contact id
 			recordId = ABRecordGetRecordID(person);
-		}
 	}
 	[newPersonViewController dismissModalViewControllerAnimated:YES];
+	PluginResult* result = [PluginResult resultWithStatus: PGCommandStatus_OK messageAsInt:  recordId];
+	//jsString = [NSString stringWithFormat: @"%@(%d);", newCP.jsCallback, recordId];
+	[self writeJavascript: [result toSuccessCallbackString:callbackId]];
 	
-	if (newCP.jsCallback){
-		jsString = [NSString stringWithFormat: @"%@(%d);", newCP.jsCallback, recordId];
-		[webView stringByEvaluatingJavaScriptFromString:jsString];
-	}
 }
 
 - (void) displayContact:(NSMutableArray*)arguments withDict:(NSMutableDictionary*)options
 {
-	NSUInteger argc = [arguments count];
 	ABRecordID recordID = kABRecordInvalidID;
-	NSString* errorCallback = nil;
-	NSString* successCallback = nil;
-	//TODO: need better argument handling system
-	if (argc > 0) {
-		recordID = [[arguments objectAtIndex:0] intValue];
-	} else {
-		NSLog(@"Contacts.display: Missing 1st parameter.");
-		return;
-	}
+	NSString* callbackId = [arguments objectAtIndex:0];
 	
-	if (argc > 1) {
-		successCallback = [arguments objectAtIndex:1];
-	}
-	if(argc > 2){
-		errorCallback = [arguments objectAtIndex:1];
-	}
+	recordID = [[arguments objectAtIndex:1] intValue];
+
 		
 	
 	//bool allowsEditing = [options isKindOfClass:[NSNull class]] ? false : [options existsValue:@"true" forKey:@"allowsEditing"];
@@ -182,13 +160,10 @@
 	} 
 	else 
 	{
-		if (errorCallback) {
-			ContactError errCode = NOT_FOUND_ERROR;
-			NSString* jsString = [NSString stringWithFormat:@"%@(%d);", errorCallback, errCode];
-			//NSLog(@"%@", jsString);
-			
-			[webView stringByEvaluatingJavaScriptFromString:jsString];
-		}
+		// no record, return error
+		PluginResult* result = [PluginResult resultWithStatus: PGCommandStatus_OK messageAsInt:  NOT_FOUND_ERROR];
+		[self writeJavascript:[result toErrorCallbackString:callbackId]];
+		
 	}
 	CFRelease(addrBook);
 }
@@ -207,20 +182,11 @@
 	
 - (void) chooseContact:(NSMutableArray*)arguments withDict:(NSMutableDictionary*)options
 {
-	NSUInteger argc = [arguments count];
-	NSString* jsCallback = nil;
-	
-	//TODO: need better argument handling system
-	if (argc > 0) {
-		jsCallback = [arguments objectAtIndex:0];
-	} else {
-		NSLog(@"Contacts.chooseContact: Missing 1st parameter.");
-		return;
-	}
+	NSString* callbackId = [arguments objectAtIndex:0];
 	
 	ContactsPicker* pickerController = [[[ContactsPicker alloc] init] autorelease];
 	pickerController.peoplePickerDelegate = self;
-	pickerController.jsCallback = jsCallback;
+	pickerController.callbackId = callbackId;
 	pickerController.selectedId = kABRecordInvalidID;
 	pickerController.allowsEditing = (BOOL)[options existsValue:@"true" forKey:@"allowsEditing"];
 	
@@ -234,6 +200,7 @@
 	ContactsPicker* picker = (ContactsPicker*)peoplePicker;
 	ABRecordID contactId = ABRecordGetRecordID(person);
 	picker.selectedId = contactId; // save so can return when dismiss
+
 	
 	if (picker.allowsEditing) {
 		
@@ -246,10 +213,9 @@
 		[peoplePicker pushViewController:personController animated:YES];
 	} else {
 		// return the contact Id
+		PluginResult* result = [PluginResult resultWithStatus: PGCommandStatus_OK messageAsInt: contactId];
+		[self writeJavascript:[result toSuccessCallbackString: picker.callbackId]];
 		
-		
-		NSString* jsString = [NSString stringWithFormat:@"%@(%d);", picker.jsCallback, contactId];
-		[webView stringByEvaluatingJavaScriptFromString:jsString];
 
 		[picker dismissModalViewControllerAnimated:YES];
 	}
@@ -266,39 +232,16 @@
 {
 	// return contactId or invalid if none picked
 	ContactsPicker* picker = (ContactsPicker*)peoplePicker;
-	NSString* jsString = [NSString stringWithFormat:@"%@(%d);", picker.jsCallback, picker.selectedId];
-	[webView stringByEvaluatingJavaScriptFromString:jsString];
+	PluginResult* result = [PluginResult resultWithStatus:PGCommandStatus_OK messageAsInt: picker.selectedId];
+	[self writeJavascript:[result toSuccessCallbackString:picker.callbackId]];
 	
 	[peoplePicker dismissModalViewControllerAnimated:YES]; 
 }
 
 - (void) search:(NSMutableArray*)arguments withDict:(NSMutableDictionary*)options
 {
-	NSUInteger argc = [arguments count];
-	NSString* jsCallback = nil;
-	NSString* jsErrCallback;
-	NSString* jsString;
-	bool bError = FALSE;
-	ContactError errCode = UNKNOWN_ERROR;
-	//args:
-	// 0 = success callback function
-	// 1 = error callback function
-	
-	//TODO: need better argument handling system
-	if (argc > 0) {
-		jsCallback = [arguments objectAtIndex:0];
-	} else {
-		bError = TRUE;
-		NSLog(@"Contacts.chooseContact: Missing success callback parameter.");
-		errCode = INVALID_ARGUMENT_ERROR;
-		jsString = [NSString stringWithFormat:@"%@(%@);", jsErrCallback, errCode];
-		[webView stringByEvaluatingJavaScriptFromString:jsString];
-		return;
-	}
-	if (argc >1) {
-		jsErrCallback = [arguments objectAtIndex:1];
-	}
-	
+	NSString* jsString = nil;
+	NSString* callbackId = [arguments objectAtIndex:0];
 	
 	
 	NSArray* fields = [options valueForKey:@"fields"];
@@ -309,216 +252,270 @@
 	
 
 	addrBook = ABAddressBookCreate();
+	// get the findOptions values
+	BOOL multiple = YES; // default is true
+	//int limit = 1; // default if multiple is FALSE, will be set below if multiple is TRUE
+	double msUpdatedSince = 0;
+	BOOL bCheckDate = NO;
+	NSString* filter = nil;
+	BOOL bIncludeRecord = YES;
+	if (![findOptions isKindOfClass:[NSNull class]]){
+		id value = nil;
+		filter = (NSString*)[findOptions objectForKey:@"filter"];
+		value = [findOptions objectForKey:@"multiple"];
+		if ([value isKindOfClass:[NSNumber class]]){
+			// multiple is a boolean that will come through as an NSNumber
+			multiple = [(NSNumber*)value boolValue];
+			//NSLog(@"multiple is: %d", multiple);
+		}
+		/* limit removed from Dec 2010 W3C contacts spec
+		 if (multiple == YES){
+			// we only care about limit if multiple is true
+			value = [findOptions objectForKey:@"limit"];
+			if ([value isKindOfClass:[NSNumber class]]){
+				limit = [(NSNumber*)value intValue];
+				//NSLog(@"limit is: %d", limit);
+			} else {
+				// no limit specified, set it to -1 to get all
+				limit = -1;
+			}
+		}*/
+		// see if there is an updated date
+		id ms = [findOptions valueForKey:@"updatedSince"];
+		if (ms && [ms isKindOfClass:[NSNumber class]]){
+			msUpdatedSince = [ms doubleValue];
+			bCheckDate = YES;
+		}
+		
+	}
+
+	NSDictionary* returnFields = [[Contact class] calcReturnFields: fields];
 	
-	NSString* filter = [findOptions isKindOfClass:[NSNull class]] ? nil : (NSString*)[findOptions objectForKey:@"filter"];
+	NSMutableArray* matches = nil;
 	if (!filter || [filter isEqualToString:@""]){ 
 		// get all records - use fields to determine what properties to return
 		foundRecords = (NSArray*)ABAddressBookCopyArrayOfAllPeople(addrBook);
-	}else {
-		// currently we can search for names only
-		//NSString* fieldsStr = [fields isKindOfClass:[NSNull class]] ? nil :[fields componentsJoinedByString:@" "];
-		//if (fieldsStr && ([fieldsStr rangeOfString:kW3ContactName].location != NSNotFound)){
-			// search by name
-			foundRecords =  (NSArray*)ABAddressBookCopyPeopleWithName(addrBook, (CFStringRef)filter);
-			
-		//} //else {
-			// use a predicate
-			//[foundRecords filteredArrayUsingPredicate:xxx]
-			
+		if (foundRecords && [foundRecords count] > 0){
+			// create Contacts and put into matches array
+			int xferCount = [foundRecords count];
+			matches = [NSMutableArray arrayWithCapacity:xferCount];
+			for(int k = 0; k<xferCount; k++){
+				Contact* xferContact = [[[Contact alloc] initFromABRecord:(ABRecordRef)[foundRecords objectAtIndex:k]] autorelease];
+				[matches addObject:xferContact];
+				xferContact = nil;
+				
+			}
+		}
+	} else {
+		foundRecords = (NSArray*)ABAddressBookCopyArrayOfAllPeople(addrBook);
+		matches = [NSMutableArray arrayWithCapacity:1];
+		BOOL bFound = NO;
+		int testCount = [foundRecords count];
+		for(int j=0; j<testCount; j++){
+			Contact* testContact = [[[Contact alloc] initFromABRecord: (ABRecordRef)[foundRecords objectAtIndex:j]] autorelease];
+			if (testContact){
+				bFound = [testContact foundValue:filter inFields:returnFields];
+				if(bFound){
+					[matches addObject:testContact];
+				}
+				testContact = nil;
+			}
+		}
 	}
+
 	NSMutableArray* returnContacts = [NSMutableArray arrayWithCapacity:1];
-	if (foundRecords){
-		NSMutableDictionary* returnFields = [[Contact class] calcReturnFields: fields];
 	
+	if (matches != nil && [matches count] > 0){
 
 		// convert to JS Contacts format and return in callback
-		
-		
 		NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init]; 
-		NSEnumerator *enumerator = [foundRecords objectEnumerator];  // look into using NSFastEnumerator
-		ABRecordRef aRecord;
-		while (aRecord = (ABRecordRef)[enumerator nextObject]) {
-			Contact* newContact = [[[Contact alloc  ]initFromABRecord:aRecord] autorelease];
-			NSMutableDictionary* aContact = [newContact toDictionary: returnFields];
-			NSString* contactStr = [aContact JSONRepresentation];
-			[returnContacts addObject:contactStr];			
+		//int count = (limit > 0 ? MIN(limit,[matches count]) : [matches count]);
+		int count = multiple == YES ? [matches count] : 1;
+		for(int i = 0; i<count; i++){
+			Contact* newContact = [matches objectAtIndex:i];
+			if (bCheckDate) {
+				NSNumber* modDate = [newContact getDateAsNumber:kABPersonModificationDateProperty];
+				if (modDate){
+					double modDateMs = [modDate doubleValue];
+					if(round(modDateMs) < round(msUpdatedSince)){
+						bIncludeRecord = NO;
+					} else {
+						bIncludeRecord = YES;
+					}
+
+				}
+			}
+			if(bIncludeRecord){
+				NSDictionary* aContact = [newContact toDictionary: returnFields];
+				NSString* contactStr = [aContact JSONRepresentation];
+				[returnContacts addObject:contactStr];
+			}
 		}
 		[pool release];
-		jsString = [NSString stringWithFormat: @"%@([%@]);", @"navigator.service.contacts._findCallback", [returnContacts componentsJoinedByString:@","]];
-
+		
+		
+	}
+	PluginResult* result = nil;
+	if ([returnContacts count] == 0){
+		// return error
+		result = [PluginResult resultWithStatus:PGCommandStatus_ERROR messageAsInt: NOT_FOUND_ERROR cast: @"navigator.service.contacts._errCallback"];
+		jsString = [result toErrorCallbackString:callbackId];
+		//jsString = [NSString stringWithFormat:@"%@(%d);", @"navigator.service.contacts._errCallback", NOT_FOUND_ERROR];
+	}else {
+		// return found contacts
+		result = [PluginResult resultWithStatus:PGCommandStatus_OK messageAsArray: returnContacts  cast: @"navigator.service.contacts._findCallback"];
+		jsString = [result toSuccessCallbackString:callbackId];
+		NSLog(@"findCallback string: %@", jsString);
+		//jsString = [NSString stringWithFormat: @"%@([%@]);", @"navigator.service.contacts._findCallback", [returnContacts componentsJoinedByString:@","]];
 	}
 
-	if (foundRecords){
-		CFRelease(foundRecords);  
-	}
 	if(addrBook){
 		CFRelease(addrBook);
 	}
-		
-	[webView stringByEvaluatingJavaScriptFromString:jsString];
+	if (foundRecords){
+		[foundRecords release];
+	}
+	
+	if(jsString){
+		[self writeJavascript:jsString];
+		//[webView stringByEvaluatingJavaScriptFromString:jsString];
+	}
+	return;
 	
 	
 }
 - (void) save:(NSMutableArray*)arguments withDict:(NSMutableDictionary*)options
 {
-	NSUInteger argc = [arguments count];
-	NSString* jsCallback = nil;
-	NSString* jsErrCallback;
-	NSString* jsString;
+	NSString* callbackId = [arguments objectAtIndex:0];
+	NSString* jsString = nil;
 	bool bIsError = FALSE, bSuccess = FALSE;
 	BOOL bUpdate = NO;
 	ContactError errCode = UNKNOWN_ERROR;
 	CFErrorRef error;
-	//args:
-	// 0 = success callback function
-	// 1 = error callback function
+	PluginResult* result = nil;	
 	
-	//TODO: need better argument handling system
-	if (argc > 0) {
-		jsCallback = [arguments objectAtIndex:0];
-	} else {
-		bIsError = TRUE;
-		errCode = INVALID_ARGUMENT_ERROR;
-		NSLog(@"Contact.save: Missing success callback parameter.");
-	}
-	if (argc >1) {
-		jsErrCallback = [arguments objectAtIndex:1];
-	}
+	NSMutableDictionary* contactDict = [options valueForKey:@"contact"];
 	
-	if (!bIsError){
-	
-		NSMutableDictionary* contactDict = [options valueForKey:@"contact"];
-		
-		ABAddressBookRef addrBook = ABAddressBookCreate();	
-		NSNumber* cId = [contactDict valueForKey:kW3ContactId];
-		Contact* aContact; 
-		ABRecordRef rec;
-		if (cId && ![cId isKindOfClass:[NSNull class]]){
-			rec = ABAddressBookGetPersonWithRecordID(addrBook, [cId intValue]);
+	ABAddressBookRef addrBook = ABAddressBookCreate();	
+	NSNumber* cId = [contactDict valueForKey:kW3ContactId];
+	Contact* aContact = nil; 
+	ABRecordRef rec = nil;
+	if (cId && ![cId isKindOfClass:[NSNull class]]){
+		rec = ABAddressBookGetPersonWithRecordID(addrBook, [cId intValue]);
+		if (rec){
 			aContact = [[Contact alloc] initFromABRecord: rec ];
-			
 			bUpdate = YES;
-		} else {
-			aContact = [[Contact alloc] init]; 
-			rec = ABPersonCreate();
-			[aContact setRecord: rec];
 		}
-
-		bSuccess = [aContact setFromContactDict: contactDict asUpdate: bUpdate];
-		if (bSuccess){
-			if (!bUpdate){
-				bSuccess = ABAddressBookAddRecord(addrBook, [aContact record], &error);
-			}
-			if (bSuccess) {
-				bSuccess = ABAddressBookSave(addrBook, &error);
-			}
-			if (!bSuccess){  // need to provide error codes
-				bIsError = TRUE;
-				errCode = IO_ERROR; 
-			} else {
-
-				// give original dictionary back?  If generate dictionary from saved contact, have no returnFields specified
-				// so would give back all fields (which W3C spec. indicates is not desired)
-				// for now (while testing) give back saved, full contact
-				NSMutableDictionary* newContact = [aContact toDictionary: nil];
-				NSString* contactStr = [newContact JSONRepresentation];
-				jsString = [NSString stringWithFormat: @"%@(%@);", @"navigator.service.contacts._contactCallback", contactStr];
-			}
-			CFRelease(addrBook);
-		} else {
+	}
+	if (!aContact){
+		aContact = [[Contact alloc] init]; 			
+	}
+	
+	bSuccess = [aContact setFromContactDict: contactDict asUpdate: bUpdate];
+	if (bSuccess){
+		if (!bUpdate){
+			bSuccess = ABAddressBookAddRecord(addrBook, [aContact record], &error);
+		}
+		if (bSuccess) {
+			bSuccess = ABAddressBookSave(addrBook, &error);
+		}
+		if (!bSuccess){  // need to provide error codes
 			bIsError = TRUE;
 			errCode = IO_ERROR; 
+		} else {
+			
+			// give original dictionary back?  If generate dictionary from saved contact, have no returnFields specified
+			// so would give back all fields (which W3C spec. indicates is not desired)
+			// for now (while testing) give back saved, full contact
+			NSDictionary* newContact = [aContact toDictionary: [Contact defaultFields]];
+			//NSString* contactStr = [newContact JSONRepresentation];
+			result = [PluginResult resultWithStatus:PGCommandStatus_OK messageAsDictionary: newContact cast: @"navigator.service.contacts._contactCallback" ];
+			jsString = [result toSuccessCallbackString:callbackId];
 		}
-		[aContact release];	
-	} // end of if !bIsError
-	if (bIsError && jsErrCallback){
-		jsString = [NSString stringWithFormat:@"%@(%@);", jsErrCallback, errCode];
+	} else {
+		bIsError = TRUE;
+		errCode = IO_ERROR; 
 	}
-	[webView stringByEvaluatingJavaScriptFromString:jsString];
-
+	[aContact release];	
+	CFRelease(addrBook);
+		
+	if (bIsError){
+		result = [PluginResult resultWithStatus:PGCommandStatus_ERROR messageAsInt: errCode cast:@"navigator.service.contacts._errCallback" ];
+		jsString = [result toErrorCallbackString:callbackId];
+		//jsString = [NSString stringWithFormat:@"%@(%d);", @"navigator.service.contacts._errCallback", errCode];
+	}
+	
+	if(jsString){
+		[self writeJavascript: jsString];
+		//[webView stringByEvaluatingJavaScriptFromString:jsString];
+	}
+	
+	
 }	
 - (void) remove: (NSMutableArray*)arguments withDict:(NSMutableDictionary*)options
 {
-	NSUInteger argc = [arguments count];
-	NSString* jsCallback = nil;
-	NSString* jsErrCallback = nil;
-	NSString* jsString;
+	NSString* callbackId = [arguments objectAtIndex:0];
+	NSString* jsString = nil;
 	bool bIsError = FALSE, bSuccess = FALSE;
 	ContactError errCode = UNKNOWN_ERROR;
 	CFErrorRef error;
 	ABAddressBookRef addrBook = nil;
 	ABRecordRef rec = nil;
-	//args:
-	// 0 = success callback function
-	// 1 = error callback function
+	PluginResult* result = nil;
 	
-	//TODO: need better argument handling system
-	if (argc > 0) {
-		jsCallback = [arguments objectAtIndex:0];
+	NSMutableDictionary* contactDict = [options valueForKey:@"contact"];
+	addrBook = ABAddressBookCreate();	
+	NSNumber* cId = [contactDict valueForKey:kW3ContactId];
+	if (cId && ![cId isKindOfClass:[NSNull class]] && [cId intValue] != kABRecordInvalidID){
+		rec = ABAddressBookGetPersonWithRecordID(addrBook, [cId intValue]);
+		if (rec){
+			bSuccess = ABAddressBookRemoveRecord(addrBook, rec, &error);
+			if (!bSuccess){
+				bIsError = TRUE;
+				errCode = IO_ERROR; 
+			} else {
+				bSuccess = ABAddressBookSave(addrBook, &error);
+				if(!bSuccess){
+					bIsError = TRUE;
+					errCode = IO_ERROR;
+				}else {
+					// set id to null
+					[contactDict setObject:[NSNull null] forKey:kW3ContactId];
+					//[result initWithStatus:PGCommandStatus_OK message: [contactDict JSONRepresentation] cast: @"navigator.service.contacts._contactCallback"];
+					result = [PluginResult resultWithStatus:PGCommandStatus_OK messageAsDictionary: contactDict cast: @"navigator.service.contacts._contactCallback"];
+					jsString = [result toSuccessCallbackString:callbackId];
+					//NSString* contactStr = [contactDict JSONRepresentation];
+					//jsString = [NSString stringWithFormat: @"%@(%@);", @"navigator.service.contacts._contactCallback", contactStr];
+				}
+			}						
+		} else {
+			// no record found return error
+			bIsError = TRUE;
+			errCode = NOT_FOUND_ERROR;
+		}
+		
 	} else {
+		// invalid contact id provided
 		bIsError = TRUE;
 		errCode = INVALID_ARGUMENT_ERROR;
-		NSLog(@"Contact.save: Missing success callback parameter.");
-	}
-	if (argc >1) {
-		jsErrCallback = [arguments objectAtIndex:1];
 	}
 	
-		if (!bIsError){
-			NSMutableDictionary* contactDict = [options valueForKey:@"contact"];
-			addrBook = ABAddressBookCreate();	
-			NSNumber* cId = [contactDict valueForKey:kW3ContactId];
-			if (cId && ![cId isKindOfClass:[NSNull class]] && [cId intValue] != kABRecordInvalidID){
-				rec = ABAddressBookGetPersonWithRecordID(addrBook, [cId intValue]);
-				if (rec){
-					bSuccess = ABAddressBookRemoveRecord(addrBook, rec, &error);
-					if (!bSuccess){
-						bIsError = TRUE;
-						errCode = IO_ERROR; 
-					} else {
-						rec = nil; // it was removed, don't release it
-						bSuccess = ABAddressBookSave(addrBook, &error);
-						if(!bSuccess){
-							bIsError = TRUE;
-							errCode = IO_ERROR;
-						}else {
-							// set id to null
-							[contactDict setObject:[NSNull null] forKey:kW3ContactId];
-							NSString* contactStr = [contactDict JSONRepresentation];
-							jsString = [NSString stringWithFormat: @"%@(%@);", @"navigator.service.contacts._contactCallback", contactStr];
-						}
-					}						
-				} else {
-					// no record found return error
-					bIsError = TRUE;
-					errCode = NOT_FOUND_ERROR;
-				}
 
-			} else {
-				// invalid contact id provided
-				bIsError = TRUE;
-				errCode = INVALID_ARGUMENT_ERROR;
-			}
-		}
+	if (addrBook){
+		CFRelease(addrBook);
+	}
+	if (bIsError){
+		result = [PluginResult resultWithStatus:PGCommandStatus_ERROR messageAsInt: errCode cast: @"navigator.service.contacts._errCallback"];
+		 jsString = [result toErrorCallbackString:callbackId];
+		 //jsString = [NSString stringWithFormat:@"%@(%d);", @"navigator.service.contacts._errCallback", errCode];
+	}
+	if (jsString){
+		[self writeJavascript:jsString];
+		//[webView stringByEvaluatingJavaScriptFromString:jsString];
+	}	
 		
-		if (bIsError && jsErrCallback){
-			jsString = [NSString stringWithFormat:@"%@(%@);", jsErrCallback, errCode];
-		}
-		if (jsString){
-			[webView stringByEvaluatingJavaScriptFromString:jsString];
-		}	
-		if (rec){
-			CFRelease(rec);
-		}
-		if (addrBook){
-			CFRelease(addrBook);
-		}
+	return;
 		
-}
-
-- (void) addressBookDirty
-{
-	
 }
 
 - (void)dealloc
